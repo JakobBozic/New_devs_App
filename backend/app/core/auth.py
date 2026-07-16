@@ -252,15 +252,26 @@ async def authenticate_request(
         logger.info(f"==================== TENANT ID EXTRACTION ====================")
         logger.info(f"User: {user.email} (ID: {user.id})")
 
-        # Use TenantResolver for comprehensive tenant resolution
-        tenant_id = await TenantResolver.resolve_tenant_id(token=token, user_id=user.id, user_email=user.email)
-
-        # If we found a tenant_id and it's not in the user's metadata, update it for next time
+        # Resolve tenant_id from the authenticated user's own claims/records - these
+        # are the actual source of truth for this specific user. If neither is
+        # present, refuse the request rather than guessing (TenantResolver's old
+        # fallback silently defaulted every unrecognized user to "tenant-a").
         current_tenant_in_metadata = None
         if hasattr(user, "raw_app_metadata") and user.raw_app_metadata:
             current_tenant_in_metadata = user.raw_app_metadata.get("tenant_id")
         elif hasattr(user, "app_metadata") and user.app_metadata:
             current_tenant_in_metadata = user.app_metadata.get("tenant_id")
+
+        if current_tenant_in_metadata:
+            tenant_id = current_tenant_in_metadata
+        elif tenant_ids:
+            tenant_id = tenant_ids[0]
+        else:
+            logger.warning(f"AUTH: No tenant_id found for user {user.email} (ID: {user.id}) - refusing request")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unable to determine tenant for this account",
+            )
 
         if tenant_id and current_tenant_in_metadata != tenant_id:
             logger.info(f"Updating user metadata with tenant_id for future requests...")
@@ -508,9 +519,23 @@ async def verify_token_ws(token: str) -> Optional[AuthenticatedUser]:
         
         logger.info(f"WS_AUTH: Final user cities after processing: {user_cities}")
 
-        # Use the comprehensive tenant resolver (same as regular auth)
+        # Resolve tenant_id the same way as authenticate_request: prefer the user's own
+        # claims/records. If neither is present, refuse the connection rather than
+        # guessing (TenantResolver's old fallback silently defaulted to "tenant-a").
         logger.info(f"WS_AUTH: Resolving tenant for user {user.email}")
-        tenant_id = await TenantResolver.resolve_tenant_id(token=token, user_id=user.id, user_email=user.email)
+        current_tenant_in_metadata = None
+        if hasattr(user, "raw_app_metadata") and user.raw_app_metadata:
+            current_tenant_in_metadata = user.raw_app_metadata.get("tenant_id")
+        elif hasattr(user, "app_metadata") and user.app_metadata:
+            current_tenant_in_metadata = user.app_metadata.get("tenant_id")
+
+        if current_tenant_in_metadata:
+            tenant_id = current_tenant_in_metadata
+        elif tenant_ids:
+            tenant_id = tenant_ids[0]
+        else:
+            logger.warning(f"WS_AUTH: No tenant_id found for user {user.email} (ID: {user.id}) - refusing connection")
+            return None
 
         auth_user = AuthenticatedUser(
             id=user.id,

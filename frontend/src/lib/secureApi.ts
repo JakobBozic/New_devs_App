@@ -1468,6 +1468,17 @@ export class SecureAPIClient {
     return this.request<any>(`/api/v1/dashboard/summary?${queryParams}`, requestOptions);
   }
 
+  /**
+   * Get the authenticated tenant's own properties for the dashboard selector.
+   * The backend scopes the list by the caller's tenant, so each client only
+   * ever sees their own properties.
+   */
+  async getDashboardProperties() {
+    return this.request<Array<{ id: string; name: string; timezone: string }>>(
+      `/api/v1/dashboard/properties`
+    );
+  }
+
   async uploadCompanyLogo(logo_url: string) {
     return this.request<any>('/api/v1/company-settings/logo', {
       method: 'POST',
